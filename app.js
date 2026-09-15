@@ -6,16 +6,36 @@
  const signed=new Map();let readerVersion=0,captchaWidget=null;
  const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const base=(config.apiBase||'/learn/api').replace(/\/$/,'');
- const headers=()=>({apikey:config.publishableKey,'Content-Type':'application/json'});
+ // The publishable key is public by design, so it is not the access control:
+ // the database only answers a signed-in reader. The session token lives in
+ // this browser alone and is never sent anywhere except this Supabase project.
+ const SESSION='exam-bank.session';let session=null;
+ function restore(){try{const raw=localStorage.getItem(SESSION);const value=raw&&JSON.parse(raw);if(value&&value.access_token&&value.refresh_token)session=value;}catch{session=null;}}
+ function remember(value){session=value;try{value?localStorage.setItem(SESSION,JSON.stringify(value)):localStorage.removeItem(SESSION);}catch{}}
+ const headers=()=>({apikey:config.publishableKey,'Content-Type':'application/json',...(session?{Authorization:'Bearer '+session.access_token}:{})});
  async function json(url,options={}) {
    const response=await fetch(url,{...options,signal:AbortSignal.timeout(30000)});
    let data;try{data=await response.json();}catch{throw Error('The server did not return a valid response. Please try again.');}
-   if(!response.ok)throw Error(data.error||data.message||'The request failed. Please try again.');
+   if(!response.ok)throw Error(data.error_description||data.msg||data.error||data.message||'The request failed. Please try again.');
    return data;
+ }
+ async function grant(body){
+   const type=body.refresh_token?'refresh_token':'password';
+   const data=await json(`${config.url}/auth/v1/token?grant_type=${type}`,
+     {method:'POST',headers:{apikey:config.publishableKey,'Content-Type':'application/json'},body:JSON.stringify(body)});
+   if(!data.access_token||!data.refresh_token)throw Error('Sign in did not complete. Please try again.');
+   return {access_token:data.access_token,refresh_token:data.refresh_token,expires_at:Date.now()+(Number(data.expires_in)||3600)*1000};
+ }
+ // Renew shortly before expiry so a long reading session does not break.
+ async function fresh(){
+   if(!cloud||!session||session.expires_at-Date.now()>60000)return;
+   try{remember(await grant({refresh_token:session.refresh_token}));}
+   catch{remember(null);signedOut('Your session has ended. Please sign in again.');throw Error('Your session has ended. Please sign in again.');}
  }
  async function rows(table){
    const all=[];
    for(let offset=0;;offset+=500){
+     await fresh();
      const page=await json(`${config.url}/rest/v1/${table}?select=payload&order=${table==='learner_questions'?'question_id':'code'}&limit=500&offset=${offset}`,{headers:headers()});
      all.push(...page.map(r=>r.payload));if(page.length<500)return all;
    }
@@ -23,6 +43,7 @@
  async function asset(path){
    if(!cloud)return base+'/asset?path='+encodeURIComponent(path);
    const cached=signed.get(path);if(cached&&cached.expires>Date.now())return cached.url;
+   await fresh();
    const data=await json(`${config.url}/storage/v1/object/sign/${config.bucket||'exam-bank'}/${path.split('/').map(encodeURIComponent).join('/')}`,{method:'POST',headers:headers(),body:JSON.stringify({expiresIn:300})});
    const signedPath=data.signedURL||data.signedUrl;
    if(typeof signedPath!=='string')throw Error('The image could not be loaded.');
@@ -86,13 +107,41 @@
    }catch(error){$('#reportStatus').textContent=error.message;if(cloud&&captchaWidget!==null)window.turnstile?.reset(captchaWidget);}
    finally{button.disabled=false;}
  };
+ function signedOut(message){
+   state.questions=[];state.topics=[];state.filtered=[];signed.clear();
+   $('#reader').close();$('#reportDialog').close();
+   $('#collection').hidden=true;$('#gate').hidden=false;$('#signOut').hidden=true;
+   $('#modeLabel').textContent='Signed out';$('#signInStatus').textContent=message||'';
+   $('#password').value='';
+ }
  async function load(){
    try{
-     if(cloud){if(!config.url||!config.publishableKey||config.publishableKey.includes('YOUR_')||!config.url.startsWith('https://'))throw Error('Supabase is not configured yet. Add the public project settings to connect this site.');[state.questions,state.topics]=await Promise.all([rows('learner_questions'),rows('learner_topics')]);}
+     if(cloud){
+       if(!config.url||!config.publishableKey||config.publishableKey.includes('YOUR_')||!config.url.startsWith('https://'))throw Error('Supabase is not configured yet. Add the public project settings to connect this site.');
+       [state.questions,state.topics]=await Promise.all([rows('learner_questions'),rows('learner_topics')]);
+     }
      else{const data=await json(base+'/catalogue');state.questions=data.questions;state.topics=data.topics;state.reportToken=data.report_token;}
      state.questions.sort((a,b)=>b.year-a.year||a.question_id.localeCompare(b.question_id,undefined,{numeric:true}));
+     $('#gate').hidden=true;$('#collection').hidden=false;$('#signOut').hidden=!cloud;
      options('#grade',[...new Set(state.questions.map(q=>q.grade))].sort((a,b)=>a-b),'All grades');options('#year',[...new Set(state.questions.map(q=>q.year))].sort((a,b)=>b-a),'All years');topics();filter();$('#modeLabel').textContent=cloud?'Connected':'Local preview';
-   }catch(error){$('#loadError').textContent=error.message;$('#loadError').hidden=false;$('#count').textContent='Collection unavailable';$('#modeLabel').textContent='Not connected';$('#previous').disabled=true;$('#next').disabled=true;}
+   }catch(error){
+     // An expired or revoked session must return to the prompt, not an error page.
+     if(cloud&&!session){signedOut(error.message.includes('session')?error.message:'');return;}
+     $('#collection').hidden=false;$('#loadError').textContent=error.message;$('#loadError').hidden=false;$('#count').textContent='Collection unavailable';$('#modeLabel').textContent='Not connected';$('#previous').disabled=true;$('#next').disabled=true;
+   }
  }
- load();
+ $('#signInForm').onsubmit=async e=>{
+   e.preventDefault();const button=$('#signInButton');button.disabled=true;$('#signInStatus').textContent='Signing in…';
+   try{
+     remember(await grant({email:$('#email').value.trim(),password:$('#password').value}));
+     $('#password').value='';$('#signInStatus').textContent='';await load();
+   }catch(error){
+     remember(null);
+     $('#signInStatus').textContent=/credential|grant|password|email/i.test(error.message)?'That email and password did not match. Please check with your teacher.':error.message;
+   }
+   finally{button.disabled=false;}
+ };
+ $('#signOut').onclick=()=>{remember(null);signedOut('You have been signed out.');};
+ restore();
+ if(cloud&&!session)signedOut();else load();
 })();
