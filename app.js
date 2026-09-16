@@ -60,12 +60,15 @@
    state.filtered=state.questions.filter(q=>(!grade||q.grade==grade)&&(!year||q.year==year)&&(!type||q.question_type===type)&&(!topic||q.topic_primary===topic)&&(!category||q.category===category)&&(!term||`${q.text} ${topicName(q.topic_primary)} ${q.institution} ${q.year}`.toLowerCase().includes(term)));
    state.page=0;render();
  }
- const observer=new IntersectionObserver(entries=>{for(const entry of entries)if(entry.isIntersecting){observer.unobserve(entry.target);const img=entry.target;asset(img.dataset.asset).then(url=>img.src=url).catch(()=>{img.replaceWith(Object.assign(document.createElement('p'),{textContent:'Preview unavailable — open question'}));});}},{rootMargin:'150px'});
+ const observer=new IntersectionObserver(entries=>{for(const entry of entries)if(entry.isIntersecting){observer.unobserve(entry.target);const img=entry.target;asset(img.dataset.asset).then(url=>img.src=url).catch(()=>{img.parentElement?.classList.remove('loading');img.replaceWith(Object.assign(document.createElement('p'),{className:'preview-text',textContent:'Open to view'}));});}},{rootMargin:'150px'});
  function render(){
    observer.disconnect();const count=state.filtered.length,total=Math.ceil(count/12),start=state.page*12;
    $('#count').textContent=count+' question'+(count===1?'':'s');
-   $('#results').innerHTML=state.filtered.slice(start,start+12).map(q=>`<button class="question-card" data-id="${esc(q.question_id)}"><div class="preview">${q.images.length?`<img data-asset="${esc(q.images[0])}" alt="Preview of question ${esc(q.number)}" loading="lazy">`:`<p class="preview-text">${esc((q.text||'Question preview unavailable.').slice(0,200))}</p>`}</div><div class="card-body"><div class="card-meta"><span>QUESTION ${esc(q.number)} · GRADE ${q.grade}</span><span>${esc(q.marks??'—')} marks</span></div><h3>${esc(topicName(q.topic_primary))}</h3><p class="card-source">${esc(q.institution)} · ${q.year} · ${esc(q.paper||'Combined')}</p><div class="card-footer"><span class="tag ${hasMemo(q)?'':'missing'}">${hasMemo(q)?'Memo available':'Memo not yet available'}</span><span>${q.question_type==='mcq'?'Multiple choice':'Written'} ↗</span></div></div></button>`).join('')||'<div class="empty"><h3>No questions found</h3><p>Try another topic, or reset your filters.</p></div>';
-   $('#results').querySelectorAll('[data-asset]').forEach(img=>{img.style.opacity='0';img.onload=()=>img.style.opacity='1';img.onerror=()=>img.replaceWith(Object.assign(document.createElement('p'),{textContent:'Preview unavailable — open question'}));observer.observe(img);});
+   $('#results').innerHTML=state.filtered.slice(start,start+12).map(q=>`<button class="question-card" data-id="${esc(q.question_id)}"><div class="preview${q.images.length?' loading':''}">${q.images.length?`<img data-asset="${esc(q.images[0])}" alt="Preview of question ${esc(q.number)}" loading="lazy">`:`<p class="preview-text">${esc((q.text||'Question preview unavailable.').slice(0,200))}</p>`}</div><div class="card-body"><div class="card-meta"><span>QUESTION ${esc(q.number)} · GRADE ${q.grade}</span><span>${esc(q.marks??'—')} marks</span></div><h3>${esc(topicName(q.topic_primary))}</h3><p class="card-source">${esc(q.institution)} · ${q.year} · ${esc(q.paper||'Combined')}</p><div class="card-footer"><span class="tag ${hasMemo(q)?'':'missing'}">${hasMemo(q)?'Memo':'No memo'}</span><span>${q.question_type==='mcq'?'MCQ':'Written'} ↗</span></div></div></button>`).join('')||'<div class="empty"><h3>No questions found</h3><p class="muted">Try another topic or reset the filters.</p></div>';
+   $('#results').querySelectorAll('[data-asset]').forEach(img=>{const box=img.parentElement;img.style.opacity='0';
+     img.onload=()=>{img.style.opacity='1';box.classList.remove('loading');};
+     img.onerror=()=>{box.classList.remove('loading');img.replaceWith(Object.assign(document.createElement('p'),{className:'preview-text',textContent:'Open to view'}));};
+     observer.observe(img);});
    $('#previous').disabled=state.page===0;$('#next').disabled=state.page+1>=total;$('#pageLabel').textContent=total?`Page ${state.page+1} of ${total}`:'0 results';
  }
  async function documentView(){
@@ -75,11 +78,14 @@
    $('#original').hidden=true;$('#original').removeAttribute('href');$('#document').innerHTML='<p class="muted">Loading…</p>';
    const pdf=memo?q.memo_pdf:q.question_pdf;
    if(pdf)asset(pdf).then(url=>{if(version===readerVersion){$('#original').href=url;$('#original').hidden=false;}}).catch(()=>{});
-   if(!images.length){$('#document').innerHTML=`<pre>${esc(memo?(q.answer||'A marking memo has not been added yet. You can still practise the question.'):(q.text||'This question has no image yet. Try the original PDF.'))}</pre>`;return;}
-   try{const url=await asset(images[state.image]);if(version!==readerVersion)return;const image=new Image();image.alt=`${memo?'Memo':'Question'} ${q.number}, section ${state.image+1}`;image.src=url;image.onerror=()=>{if(version===readerVersion)$('#document').textContent='Image unavailable. Try the original PDF or report this problem.';};$('#document').replaceChildren(image);$('#document').scrollTop=0;}
+   if(!images.length){$('#document').innerHTML=`<pre>${esc(memo?(q.answer||'No memo yet for this question.'):(q.text||'No image yet. Try the original PDF.'))}</pre>`;return;}
+   try{const url=await asset(images[state.image]);if(version!==readerVersion)return;const image=new Image();image.alt=`${memo?'Memo':'Question'} ${q.number}, section ${state.image+1}`;image.src=url;image.onerror=()=>{if(version===readerVersion)$('#document').textContent='Image unavailable. Try the PDF, or report the error.';};$('#document').replaceChildren(image);$('#document').scrollTop=0;}
    catch(e){if(version===readerVersion)$('#document').textContent=e.message;}
  }
- function openQuestion(id){state.current=state.questions.find(q=>q.question_id===id);if(!state.current)return;state.kind='question';state.image=0;const q=state.current;$('#readerMeta').textContent=`Grade ${q.grade} · ${q.year} · ${q.institution} · ${q.marks??'—'} marks`;$('#readerTitle').textContent=`Question ${q.number} · ${topicName(q.topic_primary)}`;$('#reader').showModal();documentView();}
+ function viewMode(fit){$('#document').classList.toggle('fit',fit);$('#fit').setAttribute('aria-pressed',String(fit));$('#zoom').setAttribute('aria-pressed',String(!fit));}
+ function openQuestion(id){state.current=state.questions.find(q=>q.question_id===id);if(!state.current)return;state.kind='question';state.image=0;
+   // On a phone, fitting a full-width crop makes the text unreadable; start zoomed.
+   viewMode(window.innerWidth>620);const q=state.current;$('#readerMeta').textContent=`Grade ${q.grade} · ${q.year} · ${q.institution} · ${q.marks??'—'} marks`;$('#readerTitle').textContent=`Question ${q.number} · ${topicName(q.topic_primary)}`;$('#reader').showModal();documentView();}
  function toast(message){$('#toast').textContent=message;$('#toast').hidden=false;setTimeout(()=>$('#toast').hidden=true,6000);}
  async function captcha(){
    if(!cloud)return;
@@ -94,7 +100,7 @@
  $('#previous').onclick=()=>{state.page--;render();};$('#next').onclick=()=>{state.page++;render();};
  $('[id=questionTab]').onclick=()=>{state.kind='question';state.image=0;documentView();};$('#memoTab').onclick=()=>{state.kind='memo';state.image=0;documentView();};
  $('#prevImage').onclick=()=>{state.image--;documentView();};$('#nextImage').onclick=()=>{state.image++;documentView();};
- $('#fit').onclick=()=>{$('#document').classList.add('fit');$('#fit').setAttribute('aria-pressed','true');$('#zoom').setAttribute('aria-pressed','false');};$('#zoom').onclick=()=>{$('#document').classList.remove('fit');$('#fit').setAttribute('aria-pressed','false');$('#zoom').setAttribute('aria-pressed','true');};
+ $('#fit').onclick=()=>viewMode(true);$('#zoom').onclick=()=>viewMode(false);
  document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>$('#'+b.dataset.close).close());
  $('#reportButton').onclick=async()=>{state.reportId=crypto.randomUUID();$('#reportForm').reset();$('#reportStatus').textContent='';$('#reportQuestion').textContent=`Question ${state.current.number} · Grade ${state.current.grade} · ${state.current.year}`;$('#reportDialog').showModal();try{await captcha();}catch(e){$('#reportStatus').textContent=e.message;}};
  $('#reportForm').onsubmit=async e=>{
@@ -103,7 +109,7 @@
    try{
      if(cloud){data.captcha_token=window.turnstile?.getResponse(captchaWidget)||'';if(!data.captcha_token)throw Error('Please complete the verification.');await json(config.url+'/functions/v1/report-question',{method:'POST',headers:headers(),body:JSON.stringify(data)});}
      else await json(base+'/reports',{method:'POST',headers:{'Content-Type':'application/json','X-Learner-Token':state.reportToken},body:JSON.stringify(data)});
-     $('#reportDialog').close();toast('Thank you. Your report has been sent to the question-bank team.');
+     $('#reportDialog').close();toast('Thanks — your report has been sent.');
    }catch(error){$('#reportStatus').textContent=error.message;if(cloud&&captchaWidget!==null)window.turnstile?.reset(captchaWidget);}
    finally{button.disabled=false;}
  };

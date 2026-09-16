@@ -1,17 +1,64 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Find Physical Sciences past-paper questions by grade, topic and year. Practise with original diagrams and marking memos."><title>Exam Bank · Study space</title><link rel="stylesheet" href="styles.css"><script src="config.js" defer></script><script src="app.js" defer></script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Al-Falaah College past papers. Find Physical Sciences questions by grade, topic and year, with original diagrams and marking memos."><title>Al-Falaah College · Past Papers</title><link rel="stylesheet" href="styles.css"><script src="config.js" defer></script><script src="app.js" defer></script></head>
 <body>
-<header class="site-header"><a class="brand" href="./"><span class="brand-icon" aria-hidden="true">e.</span>exam bank<span class="brand-dot">.</span></a><span class="header-note">YOUR STUDY SPACE <span class="status-pill" id="modeLabel">Loading…</span> <button id="signOut" class="text-button" hidden>Sign out</button></span></header>
+<header class="site-header"><a class="brand" href="./"><span class="brand-mark" aria-hidden="true">AF</span><span class="brand-text">Al-Falaah College<em>Past Papers</em></span></a><div class="header-right"><span class="status-pill" id="modeLabel">Loading…</span><button id="signOut" class="text-button" hidden>Sign out</button></div></header>
 <main>
-<section class="hero"><div><p class="eyebrow">A little practice. A lot more confidence.</p><h1>Your next breakthrough<br>starts with a question<span>.</span></h1><p class="intro">Find your topic. Try the question. Check your thinking.<br>Original past papers, diagrams and memos—all in one place.</p></div><div class="hero-note"><span class="orbit" aria-hidden="true">↗</span><p>PHYSICAL SCIENCES</p><strong>Make progress,<br>one question at a time.</strong></div></section>
-<section class="gate" id="gate" hidden aria-labelledby="gateTitle"><form id="signInForm"><p class="eyebrow">MEMBERS ONLY</p><h2 id="gateTitle">Sign in to open the collection</h2><p class="intro">Use the sign-in details your teacher gave you. They are the same for everyone in the class.</p><label>Email<input type="email" id="email" autocomplete="username" required maxlength="150" placeholder="you@example.org"></label><label>Password<input type="password" id="password" autocomplete="current-password" required maxlength="150"></label><p id="signInStatus" class="gate-status" role="status"></p><button class="primary" id="signInButton" type="submit">Sign in</button></form></section>
-<section class="collection" id="collection" hidden aria-labelledby="collectionTitle"><div class="section-heading"><div><p class="eyebrow">Choose what to practise</p><h2 id="collectionTitle">The question collection</h2></div><span id="count" class="muted" role="status">Loading questions…</span></div>
-<form class="filters" id="filters" role="search"><label class="search-field">Search questions<input type="search" id="search" placeholder="Try momentum, reaction rate, electric circuits…" autocomplete="off" maxlength="150"></label><div class="filter-row"><label>Grade<select id="grade"><option value="">All grades</option></select></label><label class="topic-field">Topic<select id="topic"><option value="">All topics</option></select></label><label>Year<select id="year"><option value="">All years</option></select></label><label>Question type<select id="type"><option value="">All types</option><option value="mcq">Multiple choice</option><option value="structured">Written questions</option></select></label><label>Paper source<select id="category"><option value="">All sources</option><option value="AFC">AFC · Al-Falaah College</option><option value="DBE">External · DBE / DOE</option><option value="Other">Other papers</option></select></label><button type="button" id="clear" class="text-button">Reset</button></div></form>
-<div id="loadError" class="notice" role="alert" hidden></div><div id="results" class="question-grid" aria-live="polite"></div><div class="pagination"><button id="previous" type="button">← Previous</button><span id="pageLabel"></span><button id="next" type="button">Next →</button></div></section>
-<footer><strong>Practice with purpose.</strong><span>Spotted an issue? Open a question and select “Report a problem”.</span></footer>
+
+<section class="gate" id="gate" hidden aria-labelledby="gateTitle">
+<form id="signInForm">
+<h1 id="gateTitle">Past papers</h1>
+<p class="intro">Sign in with your class details.</p>
+<label>Email<input type="email" id="email" autocomplete="username" required maxlength="150" placeholder="you@example.org"></label>
+<label>Password<input type="password" id="password" autocomplete="current-password" required maxlength="150"></label>
+<p id="signInStatus" class="gate-status" role="status"></p>
+<button class="primary" id="signInButton" type="submit">Sign in</button>
+</form>
+</section>
+
+<section class="collection" id="collection" hidden aria-labelledby="collectionTitle">
+<h1 id="collectionTitle" class="page-title">Past papers</h1>
+<form class="filters" id="filters" role="search">
+<label class="search-field"><span>Search</span><input type="search" id="search" placeholder="momentum, reaction rate, circuits…" autocomplete="off" maxlength="150"></label>
+<div class="filter-row">
+<label><span>Grade</span><select id="grade"><option value="">All grades</option></select></label>
+<label class="topic-field"><span>Topic</span><select id="topic"><option value="">All topics</option></select></label>
+<label><span>Year</span><select id="year"><option value="">All years</option></select></label>
+<label><span>Type</span><select id="type"><option value="">All types</option><option value="mcq">Multiple choice</option><option value="structured">Written</option></select></label>
+<label><span>Source</span><select id="category"><option value="">All sources</option><option value="AFC">Al-Falaah College</option><option value="DBE">DBE / DOE</option><option value="Other">Other</option></select></label>
+<button type="button" id="clear" class="text-button">Reset</button>
+</div>
+</form>
+<div class="result-bar"><span id="count" class="muted" role="status">Loading…</span></div>
+<div id="loadError" class="notice" role="alert" hidden></div>
+<div id="results" class="question-grid" aria-live="polite"></div>
+<div class="pagination"><button id="previous" type="button">← Previous</button><span id="pageLabel"></span><button id="next" type="button">Next →</button></div>
+</section>
+
 </main>
-<dialog id="reader" aria-labelledby="readerTitle"><header class="reader-header"><div><p id="readerMeta" class="eyebrow"></p><h2 id="readerTitle"></h2></div><button class="close" data-close="reader" aria-label="Close question">×</button></header><div class="reader-tools"><div class="segmented"><button id="questionTab" aria-pressed="true">Question</button><button id="memoTab" aria-pressed="false">Marking memo</button></div><div class="reader-actions"><button id="fit" aria-pressed="true">Fit page</button><button id="zoom" aria-pressed="false">Zoom</button><a id="original" target="_blank" rel="noopener">Original PDF ↗</a></div></div><div id="document" class="document fit"></div><div class="reader-bottom"><div class="page-tools"><button id="prevImage" aria-label="Previous page">‹</button><span id="imageCount"></span><button id="nextImage" aria-label="Next page">›</button></div><button id="reportButton" class="text-button">⚑ Report a problem</button></div></dialog>
-<dialog id="reportDialog" aria-labelledby="reportTitle"><form id="reportForm"><header class="report-header"><div><p class="eyebrow">Help improve the collection</p><h2 id="reportTitle">Report a problem</h2></div><button type="button" class="close" data-close="reportDialog" aria-label="Close report">×</button></header><p class="muted" id="reportQuestion"></p><label>What needs checking?<select id="reportKind" required><option value="topic">Wrong topic / miscategorised</option><option value="memo">Incorrect or mismatched memo</option><option value="crop">Missing content / incorrect crop</option><option value="other">Something else</option></select></label><label>Tell us what you noticed<textarea id="reportDetails" required minlength="10" maxlength="2000" rows="5" placeholder="For example: This asks about reaction rates, but is listed under equilibrium."></textarea></label><p class="privacy">Please do not include personal information. Your report goes to the question-bank team; it does not change the question automatically.</p><div id="captcha"></div><p id="reportStatus" role="status"></p><button id="submitReport" class="primary" type="submit">Send report</button></form></dialog>
+
+<dialog id="reader" aria-labelledby="readerTitle">
+<header class="reader-header"><div class="reader-id"><p id="readerMeta" class="eyebrow"></p><h2 id="readerTitle"></h2></div><button class="close" data-close="reader" aria-label="Close question">×</button></header>
+<div class="reader-tools">
+<div class="segmented"><button id="questionTab" aria-pressed="true">Question</button><button id="memoTab" aria-pressed="false">Memo</button></div>
+<div class="reader-actions"><button id="fit" aria-pressed="true">Fit</button><button id="zoom" aria-pressed="false">Zoom</button><a id="original" target="_blank" rel="noopener" hidden>PDF ↗</a><button id="reportButton" class="flag"><span aria-hidden="true">⚑</span> Report error</button></div>
+</div>
+<div id="document" class="document fit"></div>
+<div class="reader-bottom"><button id="prevImage" aria-label="Previous page">‹</button><span id="imageCount"></span><button id="nextImage" aria-label="Next page">›</button></div>
+</dialog>
+
+<dialog id="reportDialog" aria-labelledby="reportTitle">
+<form id="reportForm">
+<header class="report-header"><div><p class="eyebrow">HELP US FIX IT</p><h2 id="reportTitle">Report an error</h2></div><button type="button" class="close" data-close="reportDialog" aria-label="Close report">×</button></header>
+<p class="muted" id="reportQuestion"></p>
+<label>What is wrong?<select id="reportKind" required><option value="topic">Wrong topic</option><option value="memo">Wrong or mismatched memo</option><option value="crop">Missing or cut-off content</option><option value="other">Something else</option></select></label>
+<label>Details<textarea id="reportDetails" required minlength="10" maxlength="2000" rows="4" placeholder="Listed under equilibrium, but it asks about reaction rates."></textarea></label>
+<p class="privacy">No personal information, please.</p>
+<div id="captcha"></div>
+<p id="reportStatus" role="status"></p>
+<button id="submitReport" class="primary" type="submit">Send report</button>
+</form>
+</dialog>
+
 <div id="toast" class="toast" role="status" hidden></div>
 </body></html>
