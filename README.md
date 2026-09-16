@@ -25,10 +25,18 @@ This repository contains the learner front end only. The admin review worker,
 OCR pipeline, paper JSON and credentials live in a separate private workspace
 and are not part of this site.
 
-## Reporting a problem is not connected yet
+## Reporting an error
 
-`turnstileSiteKey` is still a placeholder, so the in-page "Report a problem"
-form fails closed with a message telling the reader it is unavailable. To turn
-it on, create a Cloudflare Turnstile widget for this site's hostname, put the
-site key here, set `TURNSTILE_SECRET_KEY` and `ALLOWED_ORIGINS` as Supabase Edge
-Function secrets, and deploy the `report-question` function.
+Readers can flag a wrong topic, a mismatched memo or a bad crop from the reader.
+Because the collection already requires a sign-in, the session is the check and
+there is no CAPTCHA. Validation and the hourly caps live in the database, so
+they hold even if the endpoint is called directly.
+
+## Reading a paper
+
+Zoom is continuous from 50% to 400% with a slider, the +/- buttons, the keyboard
+(`+`, `-`, `0`) or a double-tap; `Fit` shows the whole page. Phones open at 200%,
+since a fitted full-width crop is too small to read. Arrow keys and the buttons
+at the foot of the reader move through the other questions on the same topic.
+
+The site is dark by default; the switch in the header remembers your choice.

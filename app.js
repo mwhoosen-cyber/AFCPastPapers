@@ -2,8 +2,9 @@
 (() => {
  'use strict';
  const $=s=>document.querySelector(s), config=window.EXAM_BANK_CONFIG||{}, cloud=config.mode==='supabase';
- const state={questions:[],topics:[],filtered:[],page:0,current:null,kind:'question',image:0,reportToken:'',reportId:null,loading:true};
- const signed=new Map();let readerVersion=0,captchaWidget=null;
+ const state={questions:[],topics:[],filtered:[],page:0,current:null,kind:'question',image:0,reportToken:'',reportId:null,loading:true,zoom:0};
+ const signed=new Map();let readerVersion=0;
+ const THEME='exam-bank.theme',ZOOM={min:50,max:400,step:10};
  const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const base=(config.apiBase||'/learn/api').replace(/\/$/,'');
  // The publishable key is public by design, so it is not the access control:
@@ -51,6 +52,12 @@
    if(new URL(url).origin!==new URL(config.url).origin)throw Error('Invalid file address.');
    signed.set(path,{url,expires:Date.now()+240000});return url;
  }
+ function theme(value){
+   document.documentElement.dataset.theme=value;
+   $('#theme').textContent=value==='dark'?'☀':'☾';
+   $('#theme').setAttribute('aria-label',value==='dark'?'Switch to light mode':'Switch to dark mode');
+   try{localStorage.setItem(THEME,value);}catch{}
+ }
  function topicName(code){return state.topics.find(t=>t.code===code)?.label||'Topic to be confirmed';}
  function hasMemo(q){return q.memo_images.length||q.answer;}
  function options(id,values,label){const element=$(id);element.innerHTML=`<option value="">${label}</option>`+values.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('');}
@@ -82,17 +89,43 @@
    try{const url=await asset(images[state.image]);if(version!==readerVersion)return;const image=new Image();image.alt=`${memo?'Memo':'Question'} ${q.number}, section ${state.image+1}`;image.src=url;image.onerror=()=>{if(version===readerVersion)$('#document').textContent='Image unavailable. Try the PDF, or report the error.';};$('#document').replaceChildren(image);$('#document').scrollTop=0;}
    catch(e){if(version===readerVersion)$('#document').textContent=e.message;}
  }
- function viewMode(fit){$('#document').classList.toggle('fit',fit);$('#fit').setAttribute('aria-pressed',String(fit));$('#zoom').setAttribute('aria-pressed',String(!fit));}
- function openQuestion(id){state.current=state.questions.find(q=>q.question_id===id);if(!state.current)return;state.kind='question';state.image=0;
-   // On a phone, fitting a full-width crop makes the text unreadable; start zoomed.
-   viewMode(window.innerWidth>620);const q=state.current;$('#readerMeta').textContent=`Grade ${q.grade} · ${q.year} · ${q.institution} · ${q.marks??'—'} marks`;$('#readerTitle').textContent=`Question ${q.number} · ${topicName(q.topic_primary)}`;$('#reader').showModal();documentView();}
- function toast(message){$('#toast').textContent=message;$('#toast').hidden=false;setTimeout(()=>$('#toast').hidden=true,6000);}
- async function captcha(){
-   if(!cloud)return;
-   if(!config.turnstileSiteKey||config.turnstileSiteKey.includes('YOUR_'))throw Error('Reporting is not connected yet. The site owner needs to configure verification.');
-   if(!window.turnstile)await new Promise((resolve,reject)=>{let script=document.querySelector('#turnstileScript');if(script)script.remove();script=document.createElement('script');script.id='turnstileScript';script.src='https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';script.onload=resolve;script.onerror=()=>reject(Error('Could not load verification. Check your connection.'));document.head.appendChild(script);});
-   if(captchaWidget!==null)window.turnstile.reset(captchaWidget);else captchaWidget=window.turnstile.render('#captcha',{sitekey:config.turnstileSiteKey,action:'report'});
+ function zoom(percent){
+   // 0 fits the whole page; anything else is a width multiple of the viewer.
+   state.zoom=percent?Math.min(ZOOM.max,Math.max(ZOOM.min,Math.round(percent/ZOOM.step)*ZOOM.step)):0;
+   const fit=!state.zoom;
+   $('#document').classList.toggle('fit',fit);
+   $('#document').style.setProperty('--zoom',(state.zoom||100)/100);
+   $('#fit').setAttribute('aria-pressed',String(fit));
+   $('#zoomLabel').textContent=fit?'':state.zoom+'%';
+   $('#zoomRange').value=state.zoom||100;
+   $('#zoomOut').disabled=state.zoom!==0&&state.zoom<=ZOOM.min;
+   $('#zoomIn').disabled=state.zoom>=ZOOM.max;
  }
+ function step(delta){zoom((state.zoom||100)+delta);}
+ // Questions sharing this one's topic, in the order the collection lists them.
+ function peers(){return state.current?state.questions.filter(q=>q.topic_primary===state.current.topic_primary):[];}
+ function topicNav(){
+   const list=peers(),index=list.findIndex(q=>q.question_id===state.current?.question_id);
+   $('#prevTopic').disabled=index<1;$('#nextTopic').disabled=index<0||index>=list.length-1;
+   $('#topicPosition').textContent=list.length>1?`${index+1} of ${list.length} in this topic`:'Only question in this topic';
+ }
+ function stepTopic(delta){
+   const list=peers(),index=list.findIndex(q=>q.question_id===state.current?.question_id),next=list[index+delta];
+   if(next)openQuestion(next.question_id,true);
+ }
+ function openQuestion(id,keepZoom){
+   const found=state.questions.find(q=>q.question_id===id);if(!found)return;
+   state.current=found;state.kind='question';state.image=0;
+   // On a phone a fitted full-width crop is unreadable, so start at 200%.
+   // Moving through a topic keeps whatever zoom the reader has settled on.
+   if(!keepZoom)zoom(window.innerWidth>620?0:200);
+   const q=state.current;
+   $('#readerMeta').textContent=`Grade ${q.grade} · ${q.year} · ${q.institution} · ${q.marks??'—'} marks`;
+   $('#readerTitle').textContent=`Question ${q.number} · ${topicName(q.topic_primary)}`;
+   if(!$('#reader').open)$('#reader').showModal();
+   topicNav();documentView();
+ }
+ function toast(message){$('#toast').textContent=message;$('#toast').hidden=false;setTimeout(()=>$('#toast').hidden=true,6000);}
  $('#results').onclick=e=>{const card=e.target.closest('[data-id]');if(card)openQuestion(card.dataset.id);};
  $('#filters').onsubmit=e=>e.preventDefault();$('#filters').onchange=e=>{if(e.target.id==='grade')topics();filter();};
  let searchTimer;$('#search').oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(filter,180);};
@@ -100,17 +133,32 @@
  $('#previous').onclick=()=>{state.page--;render();};$('#next').onclick=()=>{state.page++;render();};
  $('[id=questionTab]').onclick=()=>{state.kind='question';state.image=0;documentView();};$('#memoTab').onclick=()=>{state.kind='memo';state.image=0;documentView();};
  $('#prevImage').onclick=()=>{state.image--;documentView();};$('#nextImage').onclick=()=>{state.image++;documentView();};
- $('#fit').onclick=()=>viewMode(true);$('#zoom').onclick=()=>viewMode(false);
+ $('#fit').onclick=()=>zoom(0);$('#zoomIn').onclick=()=>step(ZOOM.step*2);$('#zoomOut').onclick=()=>step(-ZOOM.step*2);
+ $('#zoomRange').oninput=e=>zoom(Number(e.target.value));
+ $('#prevTopic').onclick=()=>stepTopic(-1);$('#nextTopic').onclick=()=>stepTopic(1);
+ // Double-tap the page to swap between the whole page and a readable 200%.
+ $('#document').ondblclick=()=>zoom(state.zoom?0:200);
+ $('#theme').onclick=()=>theme(document.documentElement.dataset.theme==='dark'?'light':'dark');
+ document.addEventListener('keydown',e=>{
+   if(!$('#reader').open||$('#reportDialog').open||e.ctrlKey||e.metaKey||e.altKey)return;
+   if(e.key==='ArrowRight'){e.preventDefault();stepTopic(1);}
+   else if(e.key==='ArrowLeft'){e.preventDefault();stepTopic(-1);}
+   else if(e.key==='+'||e.key==='='){e.preventDefault();step(ZOOM.step*2);}
+   else if(e.key==='-'||e.key==='_'){e.preventDefault();step(-ZOOM.step*2);}
+   else if(e.key==='0'){e.preventDefault();zoom(0);}
+ });
  document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>$('#'+b.dataset.close).close());
- $('#reportButton').onclick=async()=>{state.reportId=crypto.randomUUID();$('#reportForm').reset();$('#reportStatus').textContent='';$('#reportQuestion').textContent=`Question ${state.current.number} · Grade ${state.current.grade} · ${state.current.year}`;$('#reportDialog').showModal();try{await captcha();}catch(e){$('#reportStatus').textContent=e.message;}};
+ $('#reportButton').onclick=()=>{state.reportId=crypto.randomUUID();$('#reportForm').reset();$('#reportStatus').textContent='';$('#reportQuestion').textContent=`Question ${state.current.number} · Grade ${state.current.grade} · ${state.current.year}`;$('#reportDialog').showModal();$('#reportDetails').focus();};
  $('#reportForm').onsubmit=async e=>{
    e.preventDefault();const button=$('#submitReport');button.disabled=true;$('#reportStatus').textContent='Sending…';
    const data={id:state.reportId,question_id:state.current.question_id,kind:$('#reportKind').value,details:$('#reportDetails').value.trim()};
    try{
-     if(cloud){data.captcha_token=window.turnstile?.getResponse(captchaWidget)||'';if(!data.captcha_token)throw Error('Please complete the verification.');await json(config.url+'/functions/v1/report-question',{method:'POST',headers:headers(),body:JSON.stringify(data)});}
+     // Reports are written by the signed-in reader; the session is the check.
+     if(cloud){await fresh();await json(config.url+'/rest/v1/rpc/report_question',{method:'POST',headers:headers(),
+       body:JSON.stringify({report_id:data.id,qid:data.question_id,report_kind:data.kind,description:data.details})});}
      else await json(base+'/reports',{method:'POST',headers:{'Content-Type':'application/json','X-Learner-Token':state.reportToken},body:JSON.stringify(data)});
      $('#reportDialog').close();toast('Thanks — your report has been sent.');
-   }catch(error){$('#reportStatus').textContent=error.message;if(cloud&&captchaWidget!==null)window.turnstile?.reset(captchaWidget);}
+   }catch(error){$('#reportStatus').textContent=error.message;}
    finally{button.disabled=false;}
  };
  function signedOut(message){
@@ -148,6 +196,7 @@
    finally{button.disabled=false;}
  };
  $('#signOut').onclick=()=>{remember(null);signedOut('You have been signed out.');};
+ theme(document.documentElement.dataset.theme==='light'?'light':'dark');
  restore();
  if(cloud&&!session)signedOut();else load();
 })();

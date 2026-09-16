@@ -1,8 +1,8 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Al-Falaah College past papers. Find Physical Sciences questions by grade, topic and year, with original diagrams and marking memos."><title>Al-Falaah College · Past Papers</title><link rel="stylesheet" href="styles.css"><script src="config.js" defer></script><script src="app.js" defer></script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Al-Falaah College past papers. Find Physical Sciences questions by grade, topic and year, with original diagrams and marking memos."><title>Al-Falaah College · Past Papers</title><link rel="stylesheet" href="styles.css"><script>try{var t=localStorage.getItem("exam-bank.theme");document.documentElement.dataset.theme=(t==="light"||t==="dark")?t:"dark";}catch(e){document.documentElement.dataset.theme="dark";}</script><script src="config.js" defer></script><script src="app.js" defer></script></head>
 <body>
-<header class="site-header"><a class="brand" href="./"><span class="brand-mark" aria-hidden="true">AF</span><span class="brand-text">Al-Falaah College<em>Past Papers</em></span></a><div class="header-right"><span class="status-pill" id="modeLabel">Loading…</span><button id="signOut" class="text-button" hidden>Sign out</button></div></header>
+<header class="site-header"><a class="brand" href="./"><span class="brand-mark" aria-hidden="true">AF</span><span class="brand-text">Al-Falaah College<em>Past Papers</em></span></a><div class="header-right"><span class="status-pill" id="modeLabel">Loading…</span><button id="theme" class="icon-button" aria-label="Switch theme" title="Switch theme"></button><button id="signOut" class="text-button" hidden>Sign out</button></div></header>
 <main>
 
 <section class="gate" id="gate" hidden aria-labelledby="gateTitle">
@@ -41,10 +41,10 @@
 <header class="reader-header"><div class="reader-id"><p id="readerMeta" class="eyebrow"></p><h2 id="readerTitle"></h2></div><button class="close" data-close="reader" aria-label="Close question">×</button></header>
 <div class="reader-tools">
 <div class="segmented"><button id="questionTab" aria-pressed="true">Question</button><button id="memoTab" aria-pressed="false">Memo</button></div>
-<div class="reader-actions"><button id="fit" aria-pressed="true">Fit</button><button id="zoom" aria-pressed="false">Zoom</button><a id="original" target="_blank" rel="noopener" hidden>PDF ↗</a><button id="reportButton" class="flag"><span aria-hidden="true">⚑</span> Report error</button></div>
+<div class="reader-actions"><div class="zoomer"><button id="zoomOut" aria-label="Zoom out">−</button><input id="zoomRange" type="range" min="50" max="400" step="10" value="100" aria-label="Zoom level"><button id="zoomIn" aria-label="Zoom in">+</button><button id="fit" aria-pressed="true" title="Fit the whole page">Fit</button><span id="zoomLabel" aria-live="polite">Fit</span></div><a id="original" target="_blank" rel="noopener" hidden>PDF ↗</a><button id="reportButton" class="flag"><span aria-hidden="true">⚑</span> Report error</button></div>
 </div>
 <div id="document" class="document fit"></div>
-<div class="reader-bottom"><button id="prevImage" aria-label="Previous page">‹</button><span id="imageCount"></span><button id="nextImage" aria-label="Next page">›</button></div>
+<div class="reader-bottom"><div class="page-nav"><button id="prevImage" aria-label="Previous page">‹</button><span id="imageCount"></span><button id="nextImage" aria-label="Next page">›</button></div><div class="topic-nav"><button id="prevTopic" aria-label="Previous question in this topic">←<span class="wide"> Previous</span></button><span id="topicPosition"></span><button id="nextTopic" aria-label="Next question in this topic"><span class="wide">Next in topic</span><span class="narrow">Next</span> →</button></div></div>
 </dialog>
 
 <dialog id="reportDialog" aria-labelledby="reportTitle">
@@ -54,7 +54,6 @@
 <label>What is wrong?<select id="reportKind" required><option value="topic">Wrong topic</option><option value="memo">Wrong or mismatched memo</option><option value="crop">Missing or cut-off content</option><option value="other">Something else</option></select></label>
 <label>Details<textarea id="reportDetails" required minlength="10" maxlength="2000" rows="4" placeholder="Listed under equilibrium, but it asks about reaction rates."></textarea></label>
 <p class="privacy">No personal information, please.</p>
-<div id="captcha"></div>
 <p id="reportStatus" role="status"></p>
 <button id="submitReport" class="primary" type="submit">Send report</button>
 </form>
