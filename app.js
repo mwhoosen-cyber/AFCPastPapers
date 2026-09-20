@@ -23,23 +23,26 @@
  function remember(value){session=value;try{value?localStorage.setItem(SESSION,JSON.stringify(value)):localStorage.removeItem(SESSION);}catch{}}
  function keep(key,value){try{value==null?localStorage.removeItem(key):localStorage.setItem(key,JSON.stringify(value));}catch{}}
  function recall(key){try{const raw=localStorage.getItem(key);return raw?JSON.parse(raw):null;}catch{return null;}}
- let signTimer;
- function persistSigned(){
-   clearTimeout(signTimer);
-   signTimer=setTimeout(()=>{
-     // Longest-lived first and capped, so a long afternoon of reading cannot
-     // fill this browser's storage with links that have already expired.
-     const live=[...signed].filter(([,v])=>v.expires>Date.now()).sort((a,b)=>b[1].expires-a[1].expires).slice(0,SIGN_LIMIT);
-     signed.clear();for(const [path,value] of live)signed.set(path,value);
-     keep(SIGNED,Object.fromEntries(live));
-   },1500);
+ let signTimer=null;
+ function flushSigned(){
+   // Longest-lived first and capped, so a long afternoon of reading cannot
+   // fill this browser's storage with links that have already expired.
+   clearTimeout(signTimer);signTimer=null;
+   const live=[...signed].filter(([,v])=>v.expires>Date.now()).sort((a,b)=>b[1].expires-a[1].expires).slice(0,SIGN_LIMIT);
+   signed.clear();for(const [path,value] of live)signed.set(path,value);
+   keep(SIGNED,Object.fromEntries(live));
  }
+ // Trailing and not restarted by each new link, so a steady stream of them is
+ // still written. A reload is the case this cache exists for, so the way out
+ // flushes rather than losing whatever the last window had collected.
+ function persistSigned(){if(!signTimer)signTimer=setTimeout(flushSigned,500);}
+ addEventListener('pagehide',()=>{if(signTimer)flushSigned();});
  function restoreSigned(){
    const saved=recall(SIGNED);if(!saved||typeof saved!=='object')return;
    for(const [path,value] of Object.entries(saved))
      if(value&&typeof value.url==='string'&&value.expires>Date.now())signed.set(path,value);
  }
- function forgetSigned(){clearTimeout(signTimer);signed.clear();keep(SIGNED,null);}
+ function forgetSigned(){clearTimeout(signTimer);signTimer=null;signed.clear();minting.clear();keep(SIGNED,null);}
  const headers=()=>({apikey:config.publishableKey,'Content-Type':'application/json',...(session?{Authorization:'Bearer '+session.access_token}:{})});
  async function json(url,options={}) {
    const response=await fetch(url,{...options,signal:AbortSignal.timeout(30000)});
@@ -68,9 +71,19 @@
      all.push(...page.map(r=>r.payload));if(page.length<500)return all;
    }
  }
- async function asset(path){
-   if(!cloud)return base+'/asset?path='+encodeURIComponent(path);
-   const cached=signed.get(path);if(cached&&cached.expires>Date.now())return cached.url;
+ // A grid page asks for a dozen pictures at once, and a re-render asks again
+ // while the first answers are still in the air. Every one of those used to
+ // mint its own link: a request each, and a different address each, which is
+ // the one thing the cache above cannot survive. They share one instead.
+ const minting=new Map();
+ function asset(path){
+   if(!cloud)return Promise.resolve(base+'/asset?path='+encodeURIComponent(path));
+   const cached=signed.get(path);if(cached&&cached.expires>Date.now())return Promise.resolve(cached.url);
+   const already=minting.get(path);if(already)return already;
+   const mint=sign(path).finally(()=>minting.delete(path));
+   minting.set(path,mint);return mint;
+ }
+ async function sign(path){
    await fresh();
    const data=await json(`${config.url}/storage/v1/object/sign/${config.bucket||'exam-bank'}/${path.split('/').map(encodeURIComponent).join('/')}`,{method:'POST',headers:headers(),body:JSON.stringify({expiresIn:SIGN_LIFE})});
    const signedPath=data.signedURL||data.signedUrl;
