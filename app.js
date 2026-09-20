@@ -4,7 +4,7 @@
  const $=s=>document.querySelector(s), config=window.EXAM_BANK_CONFIG||{}, cloud=config.mode==='supabase';
  const state={questions:[],topics:[],filtered:[],page:0,current:null,kind:'question',image:0,reportToken:'',reportId:null,loading:true,zoom:0};
  const signed=new Map();let readerVersion=0;
- const THEME='exam-bank.theme',ZOOM={min:50,max:400,step:10};
+ const THEME='exam-bank.theme',FILTERS='exam-bank.filters',VIEW='exam-bank.view',ZOOM={min:50,max:400,step:10};
  const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const base=(config.apiBase||'/learn/api').replace(/\/$/,'');
  // The publishable key is public by design, so it is not the access control:
@@ -13,6 +13,8 @@
  const SESSION='exam-bank.session';let session=null;
  function restore(){try{const raw=localStorage.getItem(SESSION);const value=raw&&JSON.parse(raw);if(value&&value.access_token&&value.refresh_token)session=value;}catch{session=null;}}
  function remember(value){session=value;try{value?localStorage.setItem(SESSION,JSON.stringify(value)):localStorage.removeItem(SESSION);}catch{}}
+ function keep(key,value){try{value==null?localStorage.removeItem(key):localStorage.setItem(key,JSON.stringify(value));}catch{}}
+ function recall(key){try{const raw=localStorage.getItem(key);return raw?JSON.parse(raw):null;}catch{return null;}}
  const headers=()=>({apikey:config.publishableKey,'Content-Type':'application/json',...(session?{Authorization:'Bearer '+session.access_token}:{})});
  async function json(url,options={}) {
    const response=await fetch(url,{...options,signal:AbortSignal.timeout(30000)});
@@ -56,32 +58,124 @@
    document.documentElement.dataset.theme=value;
    $('#theme').textContent=value==='dark'?'☀':'☾';
    $('#theme').setAttribute('aria-label',value==='dark'?'Switch to light mode':'Switch to dark mode');
-   try{localStorage.setItem(THEME,value);}catch{}
+   keep(THEME,undefined);try{localStorage.setItem(THEME,value);}catch{}
  }
  function topicName(code){return state.topics.find(t=>t.code===code)?.label||'Topic to be confirmed';}
+ // A topic only means something alongside its grade: CHEM-IMF is a different
+ // body of work in Grade 11 than in Grade 12, so the two are never merged.
+ function topicLabel(grade,code){return `Grade ${grade} · ${topicName(code)}`;}
  function hasMemo(q){return q.memo_images.length||q.answer;}
  function options(id,values,label){const element=$(id);element.innerHTML=`<option value="">${label}</option>`+values.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('');}
  function topics(){const selected=$('#topic').value,grade=Number($('#grade').value);const available=state.topics.filter(t=>!grade||t.examinable_in.includes(grade));$('#topic').innerHTML='<option value="">All topics'+(grade?` · Grade ${grade}`:'')+'</option>'+available.map(t=>`<option value="${esc(t.code)}">${esc(t.label)}</option>`).join('');if(available.some(t=>t.code===selected))$('#topic').value=selected;}
+
+ /* ---- Topic picker -------------------------------------------------------
+    51 topics in one dropdown is unusable, and a bare topic name hides the
+    grade. The picker lists each grade-and-topic pair that actually has
+    questions, with its count, and is searchable. Choosing one sets the grade
+    and the topic together, so the two can never disagree. */
+ function topicEntries(){
+   // Counted as grade -> code -> total, so no delimiter has to be invented
+   // for a composite key and no topic code can ever collide with one.
+   const counts=new Map();
+   for(const q of state.questions){
+     if(!q.topic_primary||q.grade==null)continue;
+     let inner=counts.get(q.grade);
+     if(!inner)counts.set(q.grade,inner=new Map());
+     inner.set(q.topic_primary,(inner.get(q.topic_primary)||0)+1);
+   }
+   const out=[];
+   for(const [grade,inner] of counts)
+     for(const [code,count] of inner)out.push({grade,code,label:topicName(code),count});
+   return out.sort((a,b)=>a.grade-b.grade||a.label.localeCompare(b.label));
+ }
+ function syncTopicButton(){
+   const code=$('#topic').value,grade=$('#grade').value;
+   $('#topicButtonText').textContent=code?(grade?topicLabel(grade,code):topicName(code)):(grade?`All Grade ${grade} topics`:'All topics');
+   $('#topicButton').classList.toggle('chosen',!!code);
+ }
+ function applyTopic(grade,code){
+   $('#grade').value=grade==null?'':String(grade);
+   topics();
+   $('#topic').value=code||'';
+   syncTopicButton();saveFilters();filter();
+ }
+ function renderTopicList(){
+   const term=$('#topicSearch').value.trim().toLowerCase();
+   const entries=topicEntries().filter(e=>!term||e.label.toLowerCase().includes(term)||('grade '+e.grade).includes(term));
+   const current=$('#topic').value,currentGrade=$('#grade').value;
+   let html=`<button type="button" class="picker-row all${current?'':' selected'}" data-grade="" data-code="" role="option" aria-selected="${!current}"><span class="row-label">All topics</span><span class="row-count">${state.questions.length}</span></button>`;
+   let grade=null;
+   for(const entry of entries){
+     if(entry.grade!==grade){grade=entry.grade;html+=`<p class="picker-group">Grade ${grade}</p>`;}
+     const selected=current===entry.code&&String(entry.grade)===String(currentGrade);
+     html+=`<button type="button" class="picker-row${selected?' selected':''}" data-grade="${entry.grade}" data-code="${esc(entry.code)}" role="option" aria-selected="${selected}"><span class="row-label"><span class="row-grade">Gr ${entry.grade}</span>${esc(entry.label)}</span><span class="row-count">${entry.count}</span></button>`;
+   }
+   $('#topicList').innerHTML=entries.length?html:'<p class="picker-empty">No topic matches that search.</p>';
+ }
+ function openTopicPicker(){
+   $('#topicSearch').value='';renderTopicList();$('#topicPicker').showModal();
+   const selected=$('#topicList .selected');
+   if(selected)selected.scrollIntoView({block:'center'});
+   if(window.innerWidth>620)$('#topicSearch').focus();
+ }
+
+ function saveFilters(){keep(FILTERS,{grade:$('#grade').value,topic:$('#topic').value,year:$('#year').value,type:$('#type').value,category:$('#category').value});}
+ function restoreFilters(){
+   const saved=recall(FILTERS);if(!saved)return;
+   for(const [id,value] of Object.entries(saved)){
+     const element=$('#'+id);if(!element||!value)continue;
+     if(id==='topic')continue;
+     if([...element.options].some(o=>o.value===value))element.value=value;
+   }
+   topics();
+   if(saved.topic&&[...$('#topic').options].some(o=>o.value===saved.topic))$('#topic').value=saved.topic;
+ }
+ function activeChips(){
+   const chips=[];
+   const grade=$('#grade').value,topic=$('#topic').value,year=$('#year').value,type=$('#type').value,category=$('#category').value;
+   if(topic)chips.push(['topic',grade?topicLabel(grade,topic):topicName(topic)]);
+   else if(grade)chips.push(['grade','Grade '+grade]);
+   if(year)chips.push(['year',year]);
+   if(type)chips.push(['type',type==='mcq'?'Multiple choice':'Written']);
+   if(category)chips.push(['category',$('#category').selectedOptions[0].textContent]);
+   $('#activeFilters').innerHTML=chips.map(([key,label])=>`<button type="button" class="filter-chip" data-drop="${key}">${esc(label)}<span aria-hidden="true">×</span><span class="visually-hidden">Remove filter</span></button>`).join('');
+ }
+ function banner(){
+   const total=state.questions.length,shown=state.filtered.length;
+   const number=n=>n.toLocaleString('en-ZA').replace(/,/g,' ');
+   $('#bannerCount').textContent=number(shown);
+   $('#bannerDetail').textContent=shown===total?`question${total===1?'':'s'} in the collection`:`of ${number(total)} questions match your filters`;
+   $('#countBanner').hidden=false;
+ }
  function filter(){
    const term=$('#search').value.trim().toLowerCase(),grade=$('#grade').value,year=$('#year').value,type=$('#type').value,topic=$('#topic').value,category=$('#category').value;
    state.filtered=state.questions.filter(q=>(!grade||q.grade==grade)&&(!year||q.year==year)&&(!type||q.question_type===type)&&(!topic||q.topic_primary===topic)&&(!category||q.category===category)&&(!term||`${q.text} ${topicName(q.topic_primary)} ${q.institution} ${q.year}`.toLowerCase().includes(term)));
-   state.page=0;render();
+   state.page=0;activeChips();render();
  }
  const observer=new IntersectionObserver(entries=>{for(const entry of entries)if(entry.isIntersecting){observer.unobserve(entry.target);const img=entry.target;asset(img.dataset.asset).then(url=>img.src=url).catch(()=>{img.parentElement?.classList.remove('loading');img.replaceWith(Object.assign(document.createElement('p'),{className:'preview-text',textContent:'Open to view'}));});}},{rootMargin:'150px'});
  function render(){
    observer.disconnect();const count=state.filtered.length,total=Math.ceil(count/12),start=state.page*12;
-   $('#count').textContent=count+' question'+(count===1?'':'s');
-   $('#results').innerHTML=state.filtered.slice(start,start+12).map(q=>`<button class="question-card" data-id="${esc(q.question_id)}"><div class="preview${q.images.length?' loading':''}">${q.images.length?`<img data-asset="${esc(q.images[0])}" alt="Preview of question ${esc(q.number)}" loading="lazy">`:`<p class="preview-text">${esc((q.text||'Question preview unavailable.').slice(0,200))}</p>`}</div><div class="card-body"><div class="card-meta"><span>QUESTION ${esc(q.number)} · GRADE ${q.grade}</span><span>${esc(q.marks??'—')} marks</span></div><h3>${esc(topicName(q.topic_primary))}</h3><p class="card-source">${esc(q.institution)} · ${q.year} · ${esc(q.paper||'Combined')}</p><div class="card-footer"><span class="tag ${hasMemo(q)?'':'missing'}">${hasMemo(q)?'Memo':'No memo'}</span><span>${q.question_type==='mcq'?'MCQ':'Written'} ↗</span></div></div></button>`).join('')||'<div class="empty"><h3>No questions found</h3><p class="muted">Try another topic or reset the filters.</p></div>';
+   $('#count').textContent=count+' question'+(count===1?'':'s');banner();
+   $('#results').innerHTML=state.filtered.slice(start,start+12).map(q=>`<button class="question-card" data-id="${esc(q.question_id)}"><div class="preview${q.images.length?' loading':''}">${q.images.length?`<img data-asset="${esc(q.images[0])}" alt="Preview of question ${esc(q.number)}" loading="lazy">`:`<p class="preview-text">${esc((q.text||'Question preview unavailable.').slice(0,200))}</p>`}</div><div class="card-body"><div class="card-meta"><span>QUESTION ${esc(q.number)} · GRADE ${q.grade}</span><span>${esc(q.marks??'—')} marks</span></div><h3><span class="grade-badge">Gr ${q.grade}</span>${esc(topicName(q.topic_primary))}</h3><p class="card-source">${esc(q.institution)} · ${q.year} · ${esc(q.paper||'Combined')}</p><div class="card-footer"><span class="tag ${hasMemo(q)?'':'missing'}">${hasMemo(q)?'Memo':'No memo'}</span><span>${q.question_type==='mcq'?'MCQ':'Written'} ↗</span></div></div></button>`).join('')||'<div class="empty"><h3>No questions found</h3><p class="muted">Try another topic or reset the filters.</p></div>';
    $('#results').querySelectorAll('[data-asset]').forEach(img=>{const box=img.parentElement;img.style.opacity='0';
      img.onload=()=>{img.style.opacity='1';box.classList.remove('loading');};
      img.onerror=()=>{box.classList.remove('loading');img.replaceWith(Object.assign(document.createElement('p'),{className:'preview-text',textContent:'Open to view'}));};
      observer.observe(img);});
    $('#previous').disabled=state.page===0;$('#next').disabled=state.page+1>=total;$('#pageLabel').textContent=total?`Page ${state.page+1} of ${total}`:'0 results';
  }
+ function memoTabState(){
+   const has=!!hasMemo(state.current),tab=$('#memoTab');
+   tab.disabled=!has;tab.classList.toggle('empty',!has);
+   tab.querySelector('.tab-text').textContent=has?'Memo':'No memo';
+   tab.title=has?'':'No memo has been added for this question yet.';
+   if(!has&&state.kind==='memo')state.kind='question';
+ }
  async function documentView(){
    const version=++readerVersion,q=state.current,memo=state.kind==='memo',images=memo?q.memo_images:q.images;
    $('#questionTab').setAttribute('aria-pressed',String(!memo));$('#memoTab').setAttribute('aria-pressed',String(memo));
    $('#imageCount').textContent=images.length?`${state.image+1} / ${images.length}`:'Text view';$('#prevImage').disabled=state.image===0;$('#nextImage').disabled=state.image>=images.length-1;
+   // Nothing to page through on a one-page crop, so the phone reclaims the row.
+   $('#reader').classList.toggle('single-page',images.length<=1);
    $('#original').hidden=true;$('#original').removeAttribute('href');$('#document').innerHTML='<p class="muted">Loading…</p>';
    const pdf=memo?q.memo_pdf:q.question_pdf;
    if(pdf)asset(pdf).then(url=>{if(version===readerVersion){$('#original').href=url;$('#original').hidden=false;}}).catch(()=>{});
@@ -89,66 +183,133 @@
    try{const url=await asset(images[state.image]);if(version!==readerVersion)return;const image=new Image();image.alt=`${memo?'Memo':'Question'} ${q.number}, section ${state.image+1}`;image.src=url;image.onerror=()=>{if(version===readerVersion)$('#document').textContent='Image unavailable. Try the PDF, or report the error.';};$('#document').replaceChildren(image);$('#document').scrollTop=0;}
    catch(e){if(version===readerVersion)$('#document').textContent=e.message;}
  }
- function zoom(percent){
-   // 0 fits the whole page; anything else is a width multiple of the viewer.
-   state.zoom=percent?Math.min(ZOOM.max,Math.max(ZOOM.min,Math.round(percent/ZOOM.step)*ZOOM.step)):0;
-   const fit=!state.zoom;
-   $('#document').classList.toggle('fit',fit);
-   $('#document').style.setProperty('--zoom',(state.zoom||100)/100);
+ function applyZoom(){
+   const fit=!state.zoom,doc=$('#document');
+   doc.classList.toggle('fit',fit);
+   doc.style.setProperty('--zoom',(state.zoom||100)/100);
    $('#fit').setAttribute('aria-pressed',String(fit));
+   $('#fitWidth').setAttribute('aria-pressed',String(state.zoom===100));
    $('#zoomLabel').textContent=fit?'':state.zoom+'%';
    $('#zoomRange').value=state.zoom||100;
-   $('#zoomOut').disabled=state.zoom!==0&&state.zoom<=ZOOM.min;
-   $('#zoomIn').disabled=state.zoom>=ZOOM.max;
+   $('#zoomOut').disabled=!fit&&state.zoom<=ZOOM.min;
+   $('#zoomIn').disabled=!fit&&state.zoom>=ZOOM.max;
+ }
+ // Zooming used to snap the page to its left edge because the viewer switched
+ // its alignment. Instead, hold whatever point is in the middle of the view
+ // (or under the fingers) steady across the change.
+ function zoom(percent,focus){
+   const doc=$('#document'),cw=doc.clientWidth||1,ch=doc.clientHeight||1;
+   const fx=focus?focus.x:(doc.scrollLeft+cw/2)/Math.max(doc.scrollWidth,1);
+   const fy=focus?focus.y:(doc.scrollTop+ch/2)/Math.max(doc.scrollHeight,1);
+   state.zoom=percent?Math.min(ZOOM.max,Math.max(ZOOM.min,Math.round(percent/ZOOM.step)*ZOOM.step)):0;
+   keep(VIEW,state.zoom);applyZoom();
+   requestAnimationFrame(()=>{
+     doc.scrollLeft=Math.max(0,fx*doc.scrollWidth-cw/2);
+     doc.scrollTop=Math.max(0,fy*doc.scrollHeight-ch/2);
+   });
  }
  function step(delta){zoom((state.zoom||100)+delta);}
- // Questions sharing this one's topic, in the order the collection lists them.
- function peers(){return state.current?state.questions.filter(q=>q.topic_primary===state.current.topic_primary):[];}
+ // Questions sharing this one's topic AND grade, in the collection's order.
+ // Grade is part of the identity: Grade 11 intermolecular forces must never
+ // hand the reader a Grade 12 question.
+ function peers(){
+   const c=state.current;if(!c)return [];
+   return state.questions.filter(q=>q.topic_primary===c.topic_primary&&q.grade===c.grade);
+ }
  function topicNav(){
-   const list=peers(),index=list.findIndex(q=>q.question_id===state.current?.question_id);
+   const list=peers(),index=list.findIndex(q=>q.question_id===state.current?.question_id),c=state.current;
    $('#prevTopic').disabled=index<1;$('#nextTopic').disabled=index<0||index>=list.length-1;
-   $('#topicPosition').textContent=list.length>1?`${index+1} of ${list.length} in this topic`:'Only question in this topic';
+   $('#topicPosition').textContent=list.length>1?`${index+1} of ${list.length} · ${topicLabel(c.grade,c.topic_primary)}`:`Only question in ${topicLabel(c.grade,c.topic_primary)}`;
  }
  function stepTopic(delta){
    const list=peers(),index=list.findIndex(q=>q.question_id===state.current?.question_id),next=list[index+delta];
    if(next)openQuestion(next.question_id,true);
  }
+ function link(id){try{history.replaceState(null,'',id?'#q='+encodeURIComponent(id):location.pathname+location.search);}catch{}}
  function openQuestion(id,keepZoom){
    const found=state.questions.find(q=>q.question_id===id);if(!found)return;
    state.current=found;state.kind='question';state.image=0;
-   // On a phone a fitted full-width crop is unreadable, so start at 200%.
-   // Moving through a topic keeps whatever zoom the reader has settled on.
-   if(!keepZoom)zoom(window.innerWidth>620?0:200);
+   // Fit shows the whole crop and always fits the screen; a reader who prefers
+   // to fill the width keeps that choice between questions and visits.
+   if(!keepZoom){const saved=recall(VIEW);zoom(typeof saved==='number'?saved:0);}
    const q=state.current;
-   $('#readerMeta').textContent=`Grade ${q.grade} · ${q.year} · ${q.institution} · ${q.marks??'—'} marks`;
-   $('#readerTitle').textContent=`Question ${q.number} · ${topicName(q.topic_primary)}`;
+   $('#readerMeta').textContent=`QUESTION ${q.number} · GRADE ${q.grade} · ${q.year} · ${q.institution} · ${q.marks??'—'} MARKS`;
+   $('#readerTitle').textContent=topicLabel(q.grade,q.topic_primary);
+   memoTabState();
    if(!$('#reader').open)$('#reader').showModal();
-   topicNav();documentView();
+   link(q.question_id);topicNav();documentView();
  }
  function toast(message){$('#toast').textContent=message;$('#toast').hidden=false;setTimeout(()=>$('#toast').hidden=true,6000);}
  $('#results').onclick=e=>{const card=e.target.closest('[data-id]');if(card)openQuestion(card.dataset.id);};
- $('#filters').onsubmit=e=>e.preventDefault();$('#filters').onchange=e=>{if(e.target.id==='grade')topics();filter();};
+ $('#filters').onsubmit=e=>e.preventDefault();
+ $('#filters').onchange=e=>{if(e.target.id==='grade'){topics();syncTopicButton();}saveFilters();filter();};
  let searchTimer;$('#search').oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(filter,180);};
- $('#clear').onclick=()=>{$('#filters').reset();topics();filter();};
- $('#previous').onclick=()=>{state.page--;render();};$('#next').onclick=()=>{state.page++;render();};
- $('[id=questionTab]').onclick=()=>{state.kind='question';state.image=0;documentView();};$('#memoTab').onclick=()=>{state.kind='memo';state.image=0;documentView();};
+ $('#clear').onclick=()=>{$('#filters').reset();topics();syncTopicButton();keep(FILTERS,null);filter();};
+ $('#activeFilters').onclick=e=>{
+   const chip=e.target.closest('[data-drop]');if(!chip)return;
+   const key=chip.dataset.drop;
+   if(key==='topic'){$('#topic').value='';}
+   else if(key==='grade'){$('#grade').value='';topics();}
+   else $('#'+key).value='';
+   syncTopicButton();saveFilters();filter();
+ };
+ $('#topicButton').onclick=openTopicPicker;
+ $('#topicSearch').oninput=renderTopicList;
+ $('#topicList').onclick=e=>{
+   const row=e.target.closest('[data-code]');if(!row)return;
+   applyTopic(row.dataset.grade===''?null:Number(row.dataset.grade),row.dataset.code);
+   $('#topicPicker').close();
+ };
+ $('#previous').onclick=()=>{state.page--;render();window.scrollTo({top:0,behavior:'smooth'});};
+ $('#next').onclick=()=>{state.page++;render();window.scrollTo({top:0,behavior:'smooth'});};
+ $('[id=questionTab]').onclick=()=>{state.kind='question';state.image=0;documentView();};
+ $('#memoTab').onclick=()=>{if(!hasMemo(state.current))return;state.kind='memo';state.image=0;documentView();};
  $('#prevImage').onclick=()=>{state.image--;documentView();};$('#nextImage').onclick=()=>{state.image++;documentView();};
- $('#fit').onclick=()=>zoom(0);$('#zoomIn').onclick=()=>step(ZOOM.step*2);$('#zoomOut').onclick=()=>step(-ZOOM.step*2);
+ $('#fit').onclick=()=>zoom(0);$('#fitWidth').onclick=()=>zoom(100);
+ $('#zoomIn').onclick=()=>step(ZOOM.step*2);$('#zoomOut').onclick=()=>step(-ZOOM.step*2);
  $('#zoomRange').oninput=e=>zoom(Number(e.target.value));
  $('#prevTopic').onclick=()=>stepTopic(-1);$('#nextTopic').onclick=()=>stepTopic(1);
- // Double-tap the page to swap between the whole page and a readable 200%.
- $('#document').ondblclick=()=>zoom(state.zoom?0:200);
+ // Double-tap swaps between the whole page and a readable full-width view.
+ $('#document').ondblclick=()=>zoom(state.zoom?0:100);
+ // Ctrl/⌘ + wheel on a trackpad, and two-finger pinch on a phone, both zoom
+ // around the point being touched rather than the top-left corner.
+ $('#document').addEventListener('wheel',e=>{
+   if(!e.ctrlKey&&!e.metaKey)return;e.preventDefault();
+   const doc=$('#document'),box=doc.getBoundingClientRect();
+   const focus={x:(doc.scrollLeft+e.clientX-box.left)/Math.max(doc.scrollWidth,1),y:(doc.scrollTop+e.clientY-box.top)/Math.max(doc.scrollHeight,1)};
+   zoom((state.zoom||100)*(e.deltaY<0?1.12:0.89),focus);
+ },{passive:false});
+ let pinch=null;const spread=t=>Math.hypot(t[0].clientX-t[1].clientX,t[0].clientY-t[1].clientY);
+ $('#document').addEventListener('touchstart',e=>{if(e.touches.length===2)pinch={gap:spread(e.touches)||1,zoom:state.zoom||100};},{passive:true});
+ $('#document').addEventListener('touchmove',e=>{
+   if(!pinch||e.touches.length!==2)return;e.preventDefault();
+   const doc=$('#document'),box=doc.getBoundingClientRect();
+   const mx=(e.touches[0].clientX+e.touches[1].clientX)/2-box.left,my=(e.touches[0].clientY+e.touches[1].clientY)/2-box.top;
+   zoom(pinch.zoom*(spread(e.touches)/pinch.gap),{x:(doc.scrollLeft+mx)/Math.max(doc.scrollWidth,1),y:(doc.scrollTop+my)/Math.max(doc.scrollHeight,1)});
+ },{passive:false});
+ $('#document').addEventListener('touchend',()=>{pinch=null;},{passive:true});
  $('#theme').onclick=()=>theme(document.documentElement.dataset.theme==='dark'?'light':'dark');
  document.addEventListener('keydown',e=>{
+   if($('#topicPicker').open&&e.key==='Escape')return;
    if(!$('#reader').open||$('#reportDialog').open||e.ctrlKey||e.metaKey||e.altKey)return;
    if(e.key==='ArrowRight'){e.preventDefault();stepTopic(1);}
    else if(e.key==='ArrowLeft'){e.preventDefault();stepTopic(-1);}
    else if(e.key==='+'||e.key==='='){e.preventDefault();step(ZOOM.step*2);}
    else if(e.key==='-'||e.key==='_'){e.preventDefault();step(-ZOOM.step*2);}
    else if(e.key==='0'){e.preventDefault();zoom(0);}
+   else if(e.key==='m'||e.key==='M'){e.preventDefault();if(hasMemo(state.current)){state.kind=state.kind==='memo'?'question':'memo';state.image=0;documentView();}}
  });
+ $('#reader').addEventListener('close',()=>link(null));
  document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>$('#'+b.dataset.close).close());
- $('#reportButton').onclick=()=>{state.reportId=crypto.randomUUID();$('#reportForm').reset();$('#reportStatus').textContent='';$('#reportQuestion').textContent=`Question ${state.current.number} · Grade ${state.current.grade} · ${state.current.year}`;$('#reportDialog').showModal();$('#reportDetails').focus();};
+ function openReport(kind){
+   if(!state.current)return;
+   state.reportId=crypto.randomUUID();$('#reportForm').reset();
+   if(kind)$('#reportKind').value=kind;
+   $('#reportStatus').textContent='';
+   $('#reportQuestion').textContent=`Question ${state.current.number} · ${topicLabel(state.current.grade,state.current.topic_primary)} · ${state.current.year}`;
+   $('#reportDialog').showModal();$('#reportDetails').focus();
+ }
+ document.querySelectorAll('[data-report-kind]').forEach(b=>b.onclick=()=>openReport(b.dataset.reportKind));
  $('#reportForm').onsubmit=async e=>{
    e.preventDefault();const button=$('#submitReport');button.disabled=true;$('#reportStatus').textContent='Sending…';
    const data={id:state.reportId,question_id:state.current.question_id,kind:$('#reportKind').value,details:$('#reportDetails').value.trim()};
@@ -163,8 +324,8 @@
  };
  function signedOut(message){
    state.questions=[];state.topics=[];state.filtered=[];signed.clear();
-   $('#reader').close();$('#reportDialog').close();
-   $('#collection').hidden=true;$('#gate').hidden=false;$('#signOut').hidden=true;
+   $('#reader').close();$('#reportDialog').close();$('#topicPicker').close();
+   $('#collection').hidden=true;$('#gate').hidden=false;$('#signOut').hidden=true;$('#countBanner').hidden=true;
    $('#modeLabel').textContent='Signed out';$('#signInStatus').textContent=message||'';
    $('#password').value='';
  }
@@ -177,7 +338,10 @@
      else{const data=await json(base+'/catalogue');state.questions=data.questions;state.topics=data.topics;state.reportToken=data.report_token;}
      state.questions.sort((a,b)=>b.year-a.year||a.question_id.localeCompare(b.question_id,undefined,{numeric:true}));
      $('#gate').hidden=true;$('#collection').hidden=false;$('#signOut').hidden=!cloud;
-     options('#grade',[...new Set(state.questions.map(q=>q.grade))].sort((a,b)=>a-b),'All grades');options('#year',[...new Set(state.questions.map(q=>q.year))].sort((a,b)=>b-a),'All years');topics();filter();$('#modeLabel').textContent=cloud?'Connected':'Local preview';
+     options('#grade',[...new Set(state.questions.map(q=>q.grade))].sort((a,b)=>a-b),'All grades');options('#year',[...new Set(state.questions.map(q=>q.year))].sort((a,b)=>b-a),'All years');
+     topics();restoreFilters();syncTopicButton();filter();$('#modeLabel').textContent=cloud?'Connected':'Local preview';
+     const deep=/^#q=(.+)$/.exec(location.hash||'');
+     if(deep)openQuestion(decodeURIComponent(deep[1]));
    }catch(error){
      // An expired or revoked session must return to the prompt, not an error page.
      if(cloud&&!session){signedOut(error.message.includes('session')?error.message:'');return;}

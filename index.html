@@ -1,8 +1,11 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Al-Falaah College past papers. Find Physical Sciences questions by grade, topic and year, with original diagrams and marking memos."><title>Al-Falaah College · Past Papers</title><link rel="stylesheet" href="styles.css"><script>try{var t=localStorage.getItem("exam-bank.theme");document.documentElement.dataset.theme=(t==="light"||t==="dark")?t:"dark";}catch(e){document.documentElement.dataset.theme="dark";}</script><script src="config.js" defer></script><script src="app.js" defer></script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="description" content="Al-Falaah College past papers. Find Physical Sciences questions by grade, topic and year, with original diagrams and marking memos."><title>Al-Falaah College · Past Papers</title><link rel="stylesheet" href="styles.css"><script>try{var t=localStorage.getItem("exam-bank.theme");document.documentElement.dataset.theme=(t==="light"||t==="dark")?t:"dark";}catch(e){document.documentElement.dataset.theme="dark";}</script><script src="config.js" defer></script><script src="app.js" defer></script></head>
 <body>
 <header class="site-header"><a class="brand" href="./"><span class="brand-mark" aria-hidden="true">AF</span><span class="brand-text">Al-Falaah College<em>Past Papers</em></span></a><div class="header-right"><span class="status-pill" id="modeLabel">Loading…</span><button id="theme" class="icon-button" aria-label="Switch theme" title="Switch theme"></button><button id="signOut" class="text-button" hidden>Sign out</button></div></header>
+
+<div class="count-banner" id="countBanner" hidden><span class="count-figure" id="bannerCount">—</span><span class="count-detail" id="bannerDetail"></span></div>
+
 <main>
 
 <section class="gate" id="gate" hidden aria-labelledby="gateTitle">
@@ -22,14 +25,19 @@
 <label class="search-field"><span>Search</span><input type="search" id="search" placeholder="momentum, reaction rate, circuits…" autocomplete="off" maxlength="150"></label>
 <div class="filter-row">
 <label><span>Grade</span><select id="grade"><option value="">All grades</option></select></label>
-<label class="topic-field"><span>Topic</span><select id="topic"><option value="">All topics</option></select></label>
+<div class="topic-field"><span class="field-label" id="topicFieldLabel">Topic</span>
+<button type="button" id="topicButton" class="picker-button" aria-haspopup="dialog" aria-labelledby="topicFieldLabel topicButtonText"><span id="topicButtonText">All topics</span><span class="picker-caret" aria-hidden="true">▾</span></button>
+<!-- The native select stays the form control the app reads and the fallback if
+     scripting fails; the button above is the searchable UI layered over it. -->
+<select id="topic" class="visually-hidden" tabindex="-1" aria-hidden="true"><option value="">All topics</option></select>
+</div>
 <label><span>Year</span><select id="year"><option value="">All years</option></select></label>
 <label><span>Type</span><select id="type"><option value="">All types</option><option value="mcq">Multiple choice</option><option value="structured">Written</option></select></label>
 <label><span>Source</span><select id="category"><option value="">All sources</option><option value="AFC">Al-Falaah College</option><option value="DBE">DBE / DOE</option><option value="Other">Other</option></select></label>
 <button type="button" id="clear" class="text-button">Reset</button>
 </div>
 </form>
-<div class="result-bar"><span id="count" class="muted" role="status">Loading…</span></div>
+<div class="result-bar"><span id="activeFilters" class="chips"></span><span id="count" class="muted" role="status">Loading…</span></div>
 <div id="loadError" class="notice" role="alert" hidden></div>
 <div id="results" class="question-grid" aria-live="polite"></div>
 <div class="pagination"><button id="previous" type="button">← Previous</button><span id="pageLabel"></span><button id="next" type="button">Next →</button></div>
@@ -37,21 +45,28 @@
 
 </main>
 
+<dialog id="topicPicker" aria-labelledby="topicPickerTitle">
+<header class="picker-header"><div><p class="eyebrow">CHOOSE A TOPIC</p><h2 id="topicPickerTitle">Topics</h2></div><button type="button" class="close" data-close="topicPicker" aria-label="Close topics">×</button></header>
+<label class="picker-search"><span class="visually-hidden">Search topics</span><input type="search" id="topicSearch" placeholder="Search topics…" autocomplete="off" maxlength="80"></label>
+<div class="picker-list" id="topicList" role="listbox" aria-labelledby="topicPickerTitle"></div>
+</dialog>
+
 <dialog id="reader" aria-labelledby="readerTitle">
 <header class="reader-header"><div class="reader-id"><p id="readerMeta" class="eyebrow"></p><h2 id="readerTitle"></h2></div><button class="close" data-close="reader" aria-label="Close question">×</button></header>
 <div class="reader-tools">
-<div class="segmented"><button id="questionTab" aria-pressed="true">Question</button><button id="memoTab" aria-pressed="false">Memo</button></div>
-<div class="reader-actions"><div class="zoomer"><button id="zoomOut" aria-label="Zoom out">−</button><input id="zoomRange" type="range" min="50" max="400" step="10" value="100" aria-label="Zoom level"><button id="zoomIn" aria-label="Zoom in">+</button><button id="fit" aria-pressed="true" title="Fit the whole page">Fit</button><span id="zoomLabel" aria-live="polite">Fit</span></div><a id="original" target="_blank" rel="noopener" hidden>PDF ↗</a><button id="reportButton" class="flag"><span aria-hidden="true">⚑</span> Report error</button></div>
+<div class="segmented"><button id="questionTab" aria-pressed="true">Question</button><button id="memoTab" aria-pressed="false"><span class="tab-text">Memo</span></button></div>
+<div class="reader-actions"><div class="zoomer"><button id="zoomOut" aria-label="Zoom out">−</button><input id="zoomRange" type="range" min="50" max="400" step="10" value="100" aria-label="Zoom level"><button id="zoomIn" aria-label="Zoom in">+</button><button id="fit" aria-pressed="true" title="Show the whole page">Fit</button><button id="fitWidth" aria-pressed="false" title="Fill the width — best for reading">Width</button><span id="zoomLabel" aria-live="polite">Fit</span></div><a id="original" target="_blank" rel="noopener" hidden>PDF ↗</a></div>
 </div>
 <div id="document" class="document fit"></div>
+<div class="report-strip"><span class="report-lead">Something wrong with this question?</span><div class="report-chips"><button type="button" class="chip" data-report-kind="topic">Wrong topic</button><button type="button" class="chip" data-report-kind="multiple">More than one question</button><button type="button" class="chip" data-report-kind="crop">Badly cropped</button><button type="button" class="chip" data-report-kind="memo">Memo problem</button></div><button type="button" id="reportButton" class="flag" data-report-kind=""><span aria-hidden="true">⚑</span> Report</button></div>
 <div class="reader-bottom"><div class="page-nav"><button id="prevImage" aria-label="Previous page">‹</button><span id="imageCount"></span><button id="nextImage" aria-label="Next page">›</button></div><div class="topic-nav"><button id="prevTopic" aria-label="Previous question in this topic">←<span class="wide"> Previous</span></button><span id="topicPosition"></span><button id="nextTopic" aria-label="Next question in this topic"><span class="wide">Next in topic</span><span class="narrow">Next</span> →</button></div></div>
 </dialog>
 
 <dialog id="reportDialog" aria-labelledby="reportTitle">
 <form id="reportForm">
-<header class="report-header"><div><p class="eyebrow">HELP US FIX IT</p><h2 id="reportTitle">Report an error</h2></div><button type="button" class="close" data-close="reportDialog" aria-label="Close report">×</button></header>
+<header class="report-header"><div><p class="eyebrow">HELP US FIX IT</p><h2 id="reportTitle">Report a problem</h2></div><button type="button" class="close" data-close="reportDialog" aria-label="Close report">×</button></header>
 <p class="muted" id="reportQuestion"></p>
-<label>What is wrong?<select id="reportKind" required><option value="topic">Wrong topic</option><option value="memo">Wrong or mismatched memo</option><option value="crop">Missing or cut-off content</option><option value="other">Something else</option></select></label>
+<label>What is wrong?<select id="reportKind" required><option value="topic">Wrong topic or grade</option><option value="multiple">More than one question on the page</option><option value="crop">Badly cropped — question is cut off</option><option value="memo">Missing, wrong or mismatched memo</option><option value="other">Something else</option></select></label>
 <label>Details<textarea id="reportDetails" required minlength="10" maxlength="2000" rows="4" placeholder="Listed under equilibrium, but it asks about reaction rates."></textarea></label>
 <p class="privacy">No personal information, please.</p>
 <p id="reportStatus" role="status"></p>
