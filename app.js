@@ -4,7 +4,15 @@
  const $=s=>document.querySelector(s), config=window.EXAM_BANK_CONFIG||{}, cloud=config.mode==='supabase';
  const state={questions:[],topics:[],filtered:[],page:0,current:null,kind:'question',image:0,reportToken:'',reportId:null,loading:true,zoom:0};
  const signed=new Map();let readerVersion=0;
- const THEME='exam-bank.theme',FILTERS='exam-bank.filters',VIEW='exam-bank.view',ZOOM={min:50,max:400,step:10};
+ const THEME='exam-bank.theme',FILTERS='exam-bank.filters',VIEW='exam-bank.view',SIGNED='exam-bank.signed',ZOOM={min:50,max:400,step:10};
+ // A signed URL is a short-lived link to one immutable, content-addressed file.
+ // Minting a fresh one for every view put a different token in the query string
+ // each time, so the browser never recognised a picture it had already fetched
+ // and downloaded the whole thing again. They now last the hour that Storage
+ // already lets its files be cached for, and they survive a reload, which is
+ // what lets that cache do its job at all. They sit beside the sign-in session
+ // in this browser and are cleared with it.
+ const SIGN_LIFE=3600,SIGN_KEEP=3300000,SIGN_LIMIT=900;
  const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const base=(config.apiBase||'/learn/api').replace(/\/$/,'');
  // The publishable key is public by design, so it is not the access control:
@@ -15,6 +23,23 @@
  function remember(value){session=value;try{value?localStorage.setItem(SESSION,JSON.stringify(value)):localStorage.removeItem(SESSION);}catch{}}
  function keep(key,value){try{value==null?localStorage.removeItem(key):localStorage.setItem(key,JSON.stringify(value));}catch{}}
  function recall(key){try{const raw=localStorage.getItem(key);return raw?JSON.parse(raw):null;}catch{return null;}}
+ let signTimer;
+ function persistSigned(){
+   clearTimeout(signTimer);
+   signTimer=setTimeout(()=>{
+     // Longest-lived first and capped, so a long afternoon of reading cannot
+     // fill this browser's storage with links that have already expired.
+     const live=[...signed].filter(([,v])=>v.expires>Date.now()).sort((a,b)=>b[1].expires-a[1].expires).slice(0,SIGN_LIMIT);
+     signed.clear();for(const [path,value] of live)signed.set(path,value);
+     keep(SIGNED,Object.fromEntries(live));
+   },1500);
+ }
+ function restoreSigned(){
+   const saved=recall(SIGNED);if(!saved||typeof saved!=='object')return;
+   for(const [path,value] of Object.entries(saved))
+     if(value&&typeof value.url==='string'&&value.expires>Date.now())signed.set(path,value);
+ }
+ function forgetSigned(){clearTimeout(signTimer);signed.clear();keep(SIGNED,null);}
  const headers=()=>({apikey:config.publishableKey,'Content-Type':'application/json',...(session?{Authorization:'Bearer '+session.access_token}:{})});
  async function json(url,options={}) {
    const response=await fetch(url,{...options,signal:AbortSignal.timeout(30000)});
@@ -47,12 +72,47 @@
    if(!cloud)return base+'/asset?path='+encodeURIComponent(path);
    const cached=signed.get(path);if(cached&&cached.expires>Date.now())return cached.url;
    await fresh();
-   const data=await json(`${config.url}/storage/v1/object/sign/${config.bucket||'exam-bank'}/${path.split('/').map(encodeURIComponent).join('/')}`,{method:'POST',headers:headers(),body:JSON.stringify({expiresIn:300})});
+   const data=await json(`${config.url}/storage/v1/object/sign/${config.bucket||'exam-bank'}/${path.split('/').map(encodeURIComponent).join('/')}`,{method:'POST',headers:headers(),body:JSON.stringify({expiresIn:SIGN_LIFE})});
    const signedPath=data.signedURL||data.signedUrl;
    if(typeof signedPath!=='string')throw Error('The image could not be loaded.');
    const url=new URL(signedPath.startsWith('/object/')?'/storage/v1'+signedPath:signedPath,config.url).href;
    if(new URL(url).origin!==new URL(config.url).origin)throw Error('Invalid file address.');
-   signed.set(path,{url,expires:Date.now()+240000});return url;
+   // Kept a little short of the hour it is good for, so a link handed out at
+   // the last moment does not expire underneath a picture still arriving.
+   signed.set(path,{url,expires:Date.now()+SIGN_KEEP});persistSigned();return url;
+ }
+
+ /* ---- The collection is kept, not fetched again --------------------------
+    Every load used to download the whole collection: megabytes of JSON, most
+    of this project's database egress, spent being told the same thing as last
+    time. It changes only when a teacher republishes, so it is kept in this
+    browser and fetched again when the published revision is different. Every
+    step is allowed to fail: with no store available, or before the project
+    has been given bank_revision(), the collection is downloaded as before. */
+ const SHELF='catalogue';
+ function shelf(mode){
+   return new Promise((resolve,reject)=>{
+     const request=indexedDB.open('exam-bank',1);
+     request.onupgradeneeded=()=>{const db=request.result;if(!db.objectStoreNames.contains(SHELF))db.createObjectStore(SHELF);};
+     request.onerror=()=>reject(request.error);request.onblocked=()=>reject(Error('Storage is busy.'));
+     request.onsuccess=()=>{try{resolve([request.result,request.result.transaction(SHELF,mode).objectStore(SHELF)]);}catch(error){request.result.close();reject(error);}};
+   });
+ }
+ function shelved(mode,run){
+   return new Promise((resolve,reject)=>shelf(mode).then(([db,store])=>{
+     const call=run(store);
+     call.onsuccess=()=>{resolve(call.result);db.close();};
+     call.onerror=()=>{reject(call.error);db.close();};
+   },reject));
+ }
+ const readCatalogue=()=>shelved('readonly',store=>store.get('current')).catch(()=>null);
+ const writeCatalogue=value=>shelved('readwrite',store=>store.put(value,'current')).catch(()=>{});
+ const dropCatalogue=()=>shelved('readwrite',store=>store.delete('current')).catch(()=>{});
+ async function published(){
+   try{
+     const value=await json(`${config.url}/rest/v1/rpc/bank_revision`,{method:'POST',headers:headers(),body:'{}'});
+     return typeof value==='string'&&value?value:null;
+   }catch{return null;}
  }
  function theme(value){
    document.documentElement.dataset.theme=value;
@@ -64,7 +124,7 @@
  // A topic only means something alongside its grade: CHEM-IMF is a different
  // body of work in Grade 11 than in Grade 12, so the two are never merged.
  function topicLabel(grade,code){return `Grade ${grade} · ${topicName(code)}`;}
- function hasMemo(q){return q.memo_images.length||q.answer;}
+ function hasMemo(q){return q.memo_images.length>0||!!q.memo_text;}
  function options(id,values,label){const element=$(id);element.innerHTML=`<option value="">${label}</option>`+values.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('');}
  function topics(){const selected=$('#topic').value,grade=Number($('#grade').value);const available=state.topics.filter(t=>!grade||t.examinable_in.includes(grade));$('#topic').innerHTML='<option value="">All topics'+(grade?` · Grade ${grade}`:'')+'</option>'+available.map(t=>`<option value="${esc(t.code)}">${esc(t.label)}</option>`).join('');if(available.some(t=>t.code===selected))$('#topic').value=selected;}
 
@@ -156,7 +216,7 @@
  function render(){
    observer.disconnect();const count=state.filtered.length,total=Math.ceil(count/12),start=state.page*12;
    $('#count').textContent=count+' question'+(count===1?'':'s');banner();
-   $('#results').innerHTML=state.filtered.slice(start,start+12).map(q=>`<button class="question-card" data-id="${esc(q.question_id)}"><div class="preview${q.images.length?' loading':''}">${q.images.length?`<img data-asset="${esc(q.images[0])}" alt="Preview of question ${esc(q.number)}" loading="lazy">`:`<p class="preview-text">${esc((q.text||'Question preview unavailable.').slice(0,200))}</p>`}</div><div class="card-body"><div class="card-meta"><span>QUESTION ${esc(q.number)} · GRADE ${q.grade}</span><span>${esc(q.marks??'—')} marks</span></div><h3><span class="grade-badge">Gr ${q.grade}</span>${esc(topicName(q.topic_primary))}</h3><p class="card-source">${esc(q.institution)} · ${q.year} · ${esc(q.paper||'Combined')}</p><div class="card-footer"><span class="tag ${hasMemo(q)?'':'missing'}">${hasMemo(q)?'Memo':'No memo'}</span><span>${q.question_type==='mcq'?'MCQ':'Written'} ↗</span></div></div></button>`).join('')||'<div class="empty"><h3>No questions found</h3><p class="muted">Try another topic or reset the filters.</p></div>';
+   $('#results').innerHTML=state.filtered.slice(start,start+12).map(q=>`<button class="question-card" data-id="${esc(q.question_id)}"><div class="preview${q.images.length?' loading':''}">${q.images.length?`<img data-asset="${esc(q.thumb||q.images[0])}" alt="Preview of question ${esc(q.number)}" loading="lazy">`:`<p class="preview-text">${esc((q.text||'Question preview unavailable.').slice(0,200))}</p>`}</div><div class="card-body"><div class="card-meta"><span>QUESTION ${esc(q.number)} · GRADE ${q.grade}</span><span>${esc(q.marks??'—')} marks</span></div><h3><span class="grade-badge">Gr ${q.grade}</span>${esc(topicName(q.topic_primary))}</h3><p class="card-source">${esc(q.institution)} · ${q.year} · ${esc(q.paper||'Combined')}</p><div class="card-footer"><span class="tag ${hasMemo(q)?'':'missing'}">${hasMemo(q)?'Memo':'No memo'}</span><span>${q.question_type==='mcq'?'MCQ':'Written'} ↗</span></div></div></button>`).join('')||'<div class="empty"><h3>No questions found</h3><p class="muted">Try another topic or reset the filters.</p></div>';
    $('#results').querySelectorAll('[data-asset]').forEach(img=>{const box=img.parentElement;img.style.opacity='0';
      img.onload=()=>{img.style.opacity='1';box.classList.remove('loading');};
      img.onerror=()=>{box.classList.remove('loading');img.replaceWith(Object.assign(document.createElement('p'),{className:'preview-text',textContent:'Open to view'}));};
@@ -179,7 +239,7 @@
    $('#original').hidden=true;$('#original').removeAttribute('href');$('#document').innerHTML='<p class="muted">Loading…</p>';
    const pdf=memo?q.memo_pdf:q.question_pdf;
    if(pdf)asset(pdf).then(url=>{if(version===readerVersion){$('#original').href=url;$('#original').hidden=false;}}).catch(()=>{});
-   if(!images.length){$('#document').innerHTML=`<pre>${esc(memo?(q.answer||'No memo yet for this question.'):(q.text||'No image yet. Try the original PDF.'))}</pre>`;return;}
+   if(!images.length){$('#document').innerHTML=`<pre>${esc(memo?(q.memo_text||'No memo yet for this question.'):(q.text||'No image yet. Try the original PDF.'))}</pre>`;return;}
    try{const url=await asset(images[state.image]);if(version!==readerVersion)return;const image=new Image();image.alt=`${memo?'Memo':'Question'} ${q.number}, section ${state.image+1}`;image.src=url;image.onerror=()=>{if(version===readerVersion)$('#document').textContent='Image unavailable. Try the PDF, or report the error.';};$('#document').replaceChildren(image);$('#document').scrollTop=0;}
    catch(e){if(version===readerVersion)$('#document').textContent=e.message;}
  }
@@ -323,7 +383,7 @@
    finally{button.disabled=false;}
  };
  function signedOut(message){
-   state.questions=[];state.topics=[];state.filtered=[];signed.clear();
+   state.questions=[];state.topics=[];state.filtered=[];forgetSigned();
    $('#reader').close();$('#reportDialog').close();$('#topicPicker').close();
    $('#collection').hidden=true;$('#gate').hidden=false;$('#signOut').hidden=true;$('#countBanner').hidden=true;
    $('#modeLabel').textContent='Signed out';$('#signInStatus').textContent=message||'';
@@ -333,7 +393,13 @@
    try{
      if(cloud){
        if(!config.url||!config.publishableKey||config.publishableKey.includes('YOUR_')||!config.url.startsWith('https://'))throw Error('Supabase is not configured yet. Add the public project settings to connect this site.');
-       [state.questions,state.topics]=await Promise.all([rows('learner_questions'),rows('learner_topics')]);
+       const revision=await published(),saved=revision?await readCatalogue():null;
+       if(saved&&saved.revision===revision&&Array.isArray(saved.questions)&&Array.isArray(saved.topics)){
+         state.questions=saved.questions;state.topics=saved.topics;
+       }else{
+         [state.questions,state.topics]=await Promise.all([rows('learner_questions'),rows('learner_topics')]);
+         if(revision)writeCatalogue({revision,questions:state.questions,topics:state.topics});
+       }
      }
      else{const data=await json(base+'/catalogue');state.questions=data.questions;state.topics=data.topics;state.reportToken=data.report_token;}
      state.questions.sort((a,b)=>b.year-a.year||a.question_id.localeCompare(b.question_id,undefined,{numeric:true}));
@@ -359,8 +425,8 @@
    }
    finally{button.disabled=false;}
  };
- $('#signOut').onclick=()=>{remember(null);signedOut('You have been signed out.');};
+ $('#signOut').onclick=()=>{remember(null);dropCatalogue();signedOut('You have been signed out.');};
  theme(document.documentElement.dataset.theme==='light'?'light':'dark');
- restore();
+ restore();restoreSigned();
  if(cloud&&!session)signedOut();else load();
 })();

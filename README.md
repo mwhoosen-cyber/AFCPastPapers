@@ -17,9 +17,16 @@ That gate is enforced by Postgres row-level security, not by this page, so it
 cannot be bypassed by editing the JavaScript or calling the API directly. New
 sign-ups are disabled for the project, so the account cannot be self-issued.
 
-Image and PDF links are short-lived signed URLs minted only for a signed-in
-reader. The private bucket exposes nothing beyond the files referenced by the
-current published collection.
+Image and PDF links are signed URLs minted only for a signed-in reader, good for
+an hour, and the page remembers the ones it has so your browser can reuse a
+picture it already has instead of fetching it again under a new address. The
+private bucket exposes nothing beyond the files referenced by the current
+published collection.
+
+The collection itself is kept in your browser and downloaded again only when a
+teacher republishes it, and the grid shows small previews rather than the full
+scans. Both are there to keep this site inside the hosting plan it runs on;
+opening a question still shows the original image at full resolution.
 
 This repository contains the learner front end only. The admin review worker,
 OCR pipeline, paper JSON and credentials live in a separate private workspace
